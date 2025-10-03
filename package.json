@@ -1,8 +1,8 @@
 {
-	"name": "@cloudflare/ai-utils",
+	"name": "@koogunmo/ai-utils",
 	"license": "Apache-2.0",
-	"version": "1.0.1",
-	"description": "Utilities for working with AI tools",
+	"version": "1.1.0",
+	"description": "Utilities for working with AI tools (fork with max_tokens support)",
 	"type": "module",
 	"author": "Dhravya Shah <dhravya@cloudflare.com>",
 	"scripts": {
@@ -14,6 +14,9 @@
 	],
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"peerDependencies": {
+		"@cloudflare/workers-types": "^4.20251003.0"
+	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20251003.0",
 		"@types/json-schema": "^7.0.15",
@@ -24,9 +27,9 @@
 		"yaml": "^2.4.5",
 		"zod": "^3.23.8"
 	},
-	"homepage": "https://github.com/cloudflare/ai-utils",
+	"homepage": "https://github.com/koogunmo/ai-utils",
 	"repository": {
 		"type": "git",
-		"url": "git+ssh://git@github.com/cloudflare/ai-utils.git"
+		"url": "git+ssh://git@github.com/koogunmo/ai-utils.git"
 	}
 }
