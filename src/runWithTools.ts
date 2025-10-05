@@ -6,7 +6,7 @@ import {
 	AiTextGenerationOutput,
 	RoleScopedChatInput,
 } from "@cloudflare/workers-types";
-import { AiTextGenerationToolInputWithFunction, ModelName } from "./types";
+import { AiTextGenerationToolInputWithFunction, ModelName, ProgressEvent } from "./types";
 
 /**
  * Runs a set of tools on a given input and returns the final response in the same format as the AI.run call.
@@ -22,6 +22,8 @@ import { AiTextGenerationToolInputWithFunction, ModelName } from "./types";
  * @param {number} [config.maxRecursiveToolRuns=0] - The maximum number of recursive tool runs to perform.
  * @param {boolean} [config.strictValidation=false] - Whether to perform strict validation (using zod) of the arguments passed to the tools.
  * @param {boolean} [config.verbose=false] - Whether to enable verbose logging.
+ * @param {(event: ProgressEvent) => void | Promise<void>} [config.onProgress] - Callback function that receives progress updates during tool execution.
+ * @param {(chunk: Uint8Array) => void | Promise<void>} [config.onChunk] - Callback function that receives raw bytes as they arrive from AI streaming. Only used when streamFinalResponse is true.
  * @param {(tools: AiTextGenerationToolInputWithFunction[], ai: Ai, model: ModelName, messages: RoleScopedChatInput[]) => Promise<AiTextGenerationToolInputWithFunction[]>} [config.trimFunction] - Use a trim function to trim down the number of tools given to the AI for a given task. You can also use this alongside `autoTrimTools`, which uses an extra AI.run call to cut down on the input tokens of the tool call based on the tool's names.
  *
  * @returns {Promise<AiTextGenerationOutput>} The final response in the same format as the AI.run call.
@@ -50,6 +52,10 @@ export const runWithTools = async (
 		strictValidation?: boolean;
 		/** Whether to enable verbose logging. */
 		verbose?: boolean;
+		/** Callback function that receives progress updates during tool execution. */
+		onProgress?: (event: ProgressEvent) => void | Promise<void>;
+		/** Callback function that receives raw bytes as they arrive from AI streaming. */
+		onChunk?: (chunk: Uint8Array) => void | Promise<void>;
 
 		/** Automatically decides the best tools to use for a given task. */
 		trimFunction?: (
@@ -72,6 +78,8 @@ export const runWithTools = async (
 			messages: RoleScopedChatInput[],
 		) => tools as AiTextGenerationToolInputWithFunction[],
 		strictValidation = false,
+		onProgress,
+		onChunk,
 	} = config;
 
 	// Enable verbose logging if specified in the config
@@ -193,9 +201,30 @@ export const runWithTools = async (
 							`Executing tool ${selectedTool.name} with arguments`,
 							args,
 						);
+
+						// Emit progress event: tool starting
+						if (onProgress) {
+							await onProgress({
+								stage: 'tool_start',
+								tool: selectedTool.name,
+								arguments: args,
+								message: `Executing ${selectedTool.name}`,
+							});
+						}
+
 						const result = await fn(args);
 
 						Logger.info(`Tool ${selectedTool.name} execution result`, result);
+
+						// Emit progress event: tool completed
+						if (onProgress) {
+							await onProgress({
+								stage: 'tool_complete',
+								tool: selectedTool.name,
+								result,
+								message: `Completed ${selectedTool.name}`,
+							});
+						}
 
 						messages.push({
 							role: "tool",
@@ -235,15 +264,43 @@ export const runWithTools = async (
 					"Max recursive tool runs reached, generating final response",
 				);
 
+				// Emit progress event: generating final response
+				if (onProgress) {
+					await onProgress({
+						stage: 'generating_response',
+						message: 'Generating response',
+					});
+				}
+
 				const finalResponse = await ai.run(model, {
 					messages: messages,
 					stream: streamFinalResponse,
 					...(input.max_tokens !== undefined && { max_tokens: input.max_tokens }),
 				});
+
 				totalCharacters += JSON.stringify(messages).length;
 				Logger.info(
 					`Number of characters for the final AI.run call: ${JSON.stringify(messages).length}`,
 				);
+
+				// If streaming with onChunk callback, consume the stream here and forward raw bytes
+				if (streamFinalResponse && onChunk) {
+					Logger.info("Consuming stream with onChunk callback - forwarding raw bytes");
+
+					const reader = (finalResponse as ReadableStream).getReader();
+
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+
+						// Forward raw bytes to the consumer
+						await onChunk(value);
+					}
+
+					Logger.info(`Total number of characters: ${totalCharacters}`);
+					// Return empty response since consumer handles the stream
+					return { response: '' } as AiTextGenerationOutput;
+				}
 
 				Logger.info(`Total number of characters: ${totalCharacters}`);
 				return finalResponse as AiTextGenerationOutput;

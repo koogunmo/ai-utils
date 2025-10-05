@@ -96,3 +96,22 @@ export function tool<T extends JSONSchema7>(
 ): ToolsSchema<T> {
 	return tool;
 }
+
+/**
+ * Progress event stages during tool execution
+ */
+export type ProgressStage =
+	| 'tool_start'
+	| 'tool_complete'
+	| 'generating_response';
+
+/**
+ * Progress event emitted during runWithTools execution
+ */
+export interface ProgressEvent {
+	stage: ProgressStage;
+	tool?: string;
+	arguments?: unknown;
+	result?: unknown;
+	message?: string;
+}
