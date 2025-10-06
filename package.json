@@ -1,13 +1,15 @@
 {
 	"name": "@koogunmo/ai-utils",
 	"license": "Apache-2.0",
-	"version": "1.1.0",
+	"version": "1.2.1",
 	"description": "Utilities for working with AI tools (fork with max_tokens support)",
 	"type": "module",
-	"author": "Dhravya Shah <dhravya@cloudflare.com>",
+	"author": "Kinsley Ogunmola<kinsley@live.com>",
 	"scripts": {
 		"build": "tsc && esbuild src/index.ts --bundle --outfile=dist/index.js --sourcemap --format=esm",
-		"format": "prettier --write ."
+		"format": "prettier --write .",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"files": [
 		"dist/*"
@@ -18,12 +20,14 @@
 		"@cloudflare/workers-types": "^4.20251003.0"
 	},
 	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.5.24",
 		"@cloudflare/workers-types": "^4.20251003.0",
 		"@types/json-schema": "^7.0.15",
 		"@types/node": "^20.14.8",
 		"esbuild": "^0.21.5",
 		"prettier": "^3.3.2",
 		"typescript": "^5.5.2",
+		"vitest": "^2.1.8",
 		"yaml": "^2.4.5",
 		"zod": "^3.23.8"
 	},

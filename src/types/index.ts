@@ -42,7 +42,7 @@ export interface Meta {
 
 export type AiTextGenerationToolInputWithFunction =
 	AiTextGenerationToolInput["function"] & {
-		function?: (args: any) => Promise<string>;
+		function?: (args: unknown) => Promise<string>;
 	};
 
 type InferValueType<T extends JSONSchema7> = T extends { type: "string" }
@@ -103,15 +103,37 @@ export function tool<T extends JSONSchema7>(
 export type ProgressStage =
 	| 'tool_start'
 	| 'tool_complete'
-	| 'generating_response';
+	| 'tool_error'
+	| 'generating_response'
+	| 'complete';
 
 /**
  * Progress event emitted during runWithTools execution
  */
-export interface ProgressEvent {
-	stage: ProgressStage;
-	tool?: string;
-	arguments?: unknown;
-	result?: unknown;
-	message?: string;
-}
+export type ProgressEvent =
+	| {
+			stage: 'tool_start';
+			tool: string;
+			arguments: unknown;
+			message?: string;
+	  }
+	| {
+			stage: 'tool_complete';
+			tool: string;
+			result: unknown;
+			message?: string;
+	  }
+	| {
+			stage: 'tool_error';
+			tool: string;
+			error: string;
+			message?: string;
+	  }
+	| {
+			stage: 'generating_response';
+			message?: string;
+	  }
+	| {
+			stage: 'complete';
+			message?: string;
+	  };

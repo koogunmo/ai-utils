@@ -8,64 +8,68 @@ import {
 } from "@cloudflare/workers-types";
 import { AiTextGenerationToolInputWithFunction, ModelName, ProgressEvent } from "./types";
 
+export interface RunWithToolsInput {
+	messages: RoleScopedChatInput[];
+	tools: AiTextGenerationToolInputWithFunction[];
+	max_tokens?: number;
+}
+
+export interface RunWithToolsConfig {
+	streamFinalResponse?: boolean;
+	maxRecursiveToolRuns?: number;
+	strictValidation?: boolean;
+	verbose?: boolean;
+	onProgress?: (event: ProgressEvent) => void | Promise<void>;
+	onChunk?: (chunk: Uint8Array) => void | Promise<void>;
+	signal?: AbortSignal;
+	trimFunction?: (
+		tools: AiTextGenerationToolInputWithFunction[],
+		ai: Ai,
+		model: ModelName,
+		messages: RoleScopedChatInput[],
+	) => Promise<AiTextGenerationToolInputWithFunction[]>;
+}
+
 /**
  * Runs a set of tools on a given input and returns the final response in the same format as the AI.run call.
  *
  * @param {Ai} ai - The AI instance to use for the run.
  * @param {ModelName} model - The function calling model to use for the run. We recommend using `@hf/nousresearch/hermes-2-pro-mistral-7b`, `llama-3` or equivalent model that's suited for function calling.
- * @param {Object} input - The input for the runWithTools call.
- * @param {RoleScopedChatInput[]} input.messages - The messages to be sent to the AI.
- * @param {AiTextGenerationToolInputWithFunction[]} input.tools - The tools to be used. You can also pass a function along with each tool that will automatically run the tool with the arguments passed to the function. The function arguments are type-checked against your tool's parameters, so you can get autocomplete and type checking in your IDE.
- * @param {number} [input.max_tokens] - Maximum number of tokens to generate in the response.
- * @param {Object} config - Configuration options for the runWithTools call.
- * @param {boolean} [config.streamFinalResponse=false] - Whether to stream the final response or not.
- * @param {number} [config.maxRecursiveToolRuns=0] - The maximum number of recursive tool runs to perform.
- * @param {boolean} [config.strictValidation=false] - Whether to perform strict validation (using zod) of the arguments passed to the tools.
- * @param {boolean} [config.verbose=false] - Whether to enable verbose logging.
- * @param {(event: ProgressEvent) => void | Promise<void>} [config.onProgress] - Callback function that receives progress updates during tool execution.
- * @param {(chunk: Uint8Array) => void | Promise<void>} [config.onChunk] - Callback function that receives raw bytes as they arrive from AI streaming. Only used when streamFinalResponse is true.
- * @param {(tools: AiTextGenerationToolInputWithFunction[], ai: Ai, model: ModelName, messages: RoleScopedChatInput[]) => Promise<AiTextGenerationToolInputWithFunction[]>} [config.trimFunction] - Use a trim function to trim down the number of tools given to the AI for a given task. You can also use this alongside `autoTrimTools`, which uses an extra AI.run call to cut down on the input tokens of the tool call based on the tool's names.
+ * @param {RunWithToolsInput} input - The input for the runWithTools call.
+ * @param {RunWithToolsConfig} config - Configuration options for the runWithTools call.
  *
- * @returns {Promise<AiTextGenerationOutput>} The final response in the same format as the AI.run call.
+ * @returns {Promise<AiTextGenerationOutput>} The final response when not streaming.
  */
-export const runWithTools = async (
-	/** The AI instance to use for the run. */
+export async function runWithTools(
 	ai: Ai,
-	/** The function calling model to use for the run. We recommend using `@hf/nousresearch/hermes-2-pro-mistral-7b`, `llama-3` or equivalent model that's suited for function calling. */
 	model: ModelName,
-	/** The input for the runWithTools call. */
-	input: {
-		/** The messages to be sent to the AI. */
-		messages: RoleScopedChatInput[];
-		/** The tools to be used. You can also pass a function along with each tool that will Automatically run the tool with the arguments passed to the function. The function arguments are type-checked against your tool's parameters, so you can get autocomplete and type checking in your IDE. */
-		tools: AiTextGenerationToolInputWithFunction[];
-		/** Maximum number of tokens to generate in the response. */
-		max_tokens?: number;
-	},
-	/** Configuration options for the runWithTools call. */
-	config: {
-		/** Whether to stream the final response or not. */
-		streamFinalResponse?: boolean;
-		/** The maximum number of recursive tool runs to perform. */
-		maxRecursiveToolRuns?: number;
-		/** Whether to perform strict validation (using zod) of the arguments passed to the tools. */
-		strictValidation?: boolean;
-		/** Whether to enable verbose logging. */
-		verbose?: boolean;
-		/** Callback function that receives progress updates during tool execution. */
-		onProgress?: (event: ProgressEvent) => void | Promise<void>;
-		/** Callback function that receives raw bytes as they arrive from AI streaming. */
-		onChunk?: (chunk: Uint8Array) => void | Promise<void>;
+	input: RunWithToolsInput,
+	config?: RunWithToolsConfig & { streamFinalResponse?: false }
+): Promise<AiTextGenerationOutput>;
 
-		/** Automatically decides the best tools to use for a given task. */
-		trimFunction?: (
-			tools: AiTextGenerationToolInputWithFunction[],
-			ai: Ai,
-			model: ModelName,
-			messages: RoleScopedChatInput[],
-		) => Promise<AiTextGenerationToolInputWithFunction[]>;
-	} = {},
-): Promise<AiTextGenerationOutput> => {
+/**
+ * Runs a set of tools on a given input and returns a streaming response.
+ *
+ * @param {Ai} ai - The AI instance to use for the run.
+ * @param {ModelName} model - The function calling model to use for the run.
+ * @param {RunWithToolsInput} input - The input for the runWithTools call.
+ * @param {RunWithToolsConfig} config - Configuration options with streaming enabled.
+ *
+ * @returns {Promise<AiTextGenerationOutput>} Empty response object when streaming (actual content via onChunk callback).
+ */
+export async function runWithTools(
+	ai: Ai,
+	model: ModelName,
+	input: RunWithToolsInput,
+	config: RunWithToolsConfig & { streamFinalResponse: true }
+): Promise<AiTextGenerationOutput>;
+
+export async function runWithTools(
+	ai: Ai,
+	model: ModelName,
+	input: RunWithToolsInput,
+	config: RunWithToolsConfig = {},
+): Promise<AiTextGenerationOutput> {
 	// Destructure config with default values
 	const {
 		streamFinalResponse = false,
@@ -80,6 +84,7 @@ export const runWithTools = async (
 		strictValidation = false,
 		onProgress,
 		onChunk,
+		signal,
 	} = config;
 
 	// Enable verbose logging if specified in the config
@@ -158,96 +163,128 @@ export const runWithTools = async (
 
 			tool_calls = response.tool_calls?.filter(Boolean) ?? [];
 
-			const toolCallPromises = tool_calls.map(async (toolCall) => {
-				const toolCallObjectJson = toolCall;
-
+			if (tool_calls.length > 0) {
 				messages.push({
 					role: "assistant",
-					content: JSON.stringify(toolCallObjectJson),
+					content: JSON.stringify(tool_calls),
 				});
 
-				const selectedTool = input.tools.find(
-					(tool) => tool.name === toolCallObjectJson.name,
+				const toolResults = await Promise.all(
+					tool_calls.map(async (toolCall, index) => {
+						const selectedTool = input.tools.find(
+							(tool) => tool.name === toolCall.name,
+						);
+
+						if (!selectedTool) {
+							Logger.error(
+								`Tool ${toolCall.name} not found, maybe AI hallucinated`,
+							);
+							return { index, toolCall, result: null };
+						}
+
+						const fn = selectedTool.function;
+
+						if (fn === undefined || selectedTool.parameters === undefined) {
+							Logger.error(
+								`Function for tool ${toolCall.name} is undefined`,
+							);
+							return { index, toolCall, result: null };
+						}
+
+						const args = toolCall.arguments;
+
+						if (
+							strictValidation &&
+							!validateArgsWithZod(
+								args,
+								selectedTool.parameters.properties as any,
+							)
+						) {
+							Logger.error(
+								`Invalid arguments for tool ${selectedTool.name}: ${JSON.stringify(args)}`,
+							);
+							return { index, toolCall, result: null };
+						}
+
+						try {
+							Logger.info(
+								`Executing tool ${selectedTool.name} with arguments`,
+								args,
+							);
+
+							if (onProgress) {
+								try {
+									await onProgress({
+										stage: 'tool_start',
+										tool: selectedTool.name,
+										arguments: args,
+										message: `Executing ${selectedTool.name}`,
+									});
+								} catch (error) {
+									Logger.error('onProgress callback failed:', error);
+								}
+							}
+
+							const result = await fn(args);
+
+							Logger.info(`Tool ${selectedTool.name} execution result`, result);
+
+							if (onProgress) {
+								try {
+									await onProgress({
+										stage: 'tool_complete',
+										tool: selectedTool.name,
+										result,
+										message: `Completed ${selectedTool.name}`,
+									});
+								} catch (error) {
+									Logger.error('onProgress callback failed:', error);
+								}
+							}
+
+							return { index, toolCall, result, toolName: selectedTool.name };
+						} catch (error) {
+							Logger.error(`Error executing tool ${selectedTool.name}:`, error);
+
+						if (onProgress) {
+							try {
+								await onProgress({
+									stage: 'tool_error',
+									tool: selectedTool.name,
+									error: (error as Error).message,
+									message: `Failed to execute ${selectedTool.name}`,
+								});
+							} catch (progressError) {
+								Logger.error('onProgress callback failed:', progressError);
+							}
+						}
+							return {
+								index,
+								toolCall,
+								result: null,
+								error: (error as Error).message,
+								toolName: selectedTool.name,
+							};
+						}
+					})
 				);
 
-				if (!selectedTool) {
-					Logger.error(
-						`Tool ${toolCallObjectJson.name} not found, maybe AI hallucinated`,
-					);
-					return; // Or handle the error accordingly
-				}
-
-				const fn = selectedTool.function;
-
-				if (fn !== undefined && selectedTool.parameters !== undefined) {
-					const args = toolCallObjectJson.arguments;
-
-					// Validate arguments if strict validation is enabled
-					if (
-						strictValidation &&
-						!validateArgsWithZod(
-							args,
-							selectedTool.parameters.properties as any,
-						)
-					) {
-						Logger.error(
-							`Invalid arguments for tool ${selectedTool.name}: ${JSON.stringify(args)}`,
-						);
-						return; // Or handle the error accordingly
-					}
-
-					try {
-						Logger.info(
-							`Executing tool ${selectedTool.name} with arguments`,
-							args,
-						);
-
-						// Emit progress event: tool starting
-						if (onProgress) {
-							await onProgress({
-								stage: 'tool_start',
-								tool: selectedTool.name,
-								arguments: args,
-								message: `Executing ${selectedTool.name}`,
-							});
-						}
-
-						const result = await fn(args);
-
-						Logger.info(`Tool ${selectedTool.name} execution result`, result);
-
-						// Emit progress event: tool completed
-						if (onProgress) {
-							await onProgress({
-								stage: 'tool_complete',
-								tool: selectedTool.name,
-								result,
-								message: `Completed ${selectedTool.name}`,
-							});
-						}
-
+				for (const { toolCall, result, error, toolName } of toolResults) {
+					if (error) {
+						messages.push({
+							role: "tool",
+							content: `Error executing tool ${toolName}: ${error}`,
+							name: toolCall.name,
+						});
+					} else if (result !== null) {
 						messages.push({
 							role: "tool",
 							content: JSON.stringify(result),
-							name: selectedTool.name,
-						});
-					} catch (error) {
-						Logger.error(`Error executing tool ${selectedTool.name}:`, error);
-						messages.push({
-							role: "tool",
-							content: `Error executing tool ${selectedTool.name}: ${(error as Error).message}`,
-							name: selectedTool.name,
+							name: toolCall.name,
 						});
 					}
-				} else {
-					Logger.error(
-						`Function for tool ${toolCallObjectJson.name} is undefined`,
-					);
-          return response
 				}
-			});
-
-			await Promise.all(toolCallPromises);
+			}
 
 			// Recursively call the runAndProcessToolCall if maxRecursiveToolRuns is not reached
 			if (maxRecursiveToolRuns > 0 && tool_calls.length > 0) {
@@ -266,10 +303,14 @@ export const runWithTools = async (
 
 				// Emit progress event: generating final response
 				if (onProgress) {
-					await onProgress({
-						stage: 'generating_response',
-						message: 'Generating response',
-					});
+					try {
+						await onProgress({
+							stage: 'generating_response',
+							message: 'Generating response',
+						});
+					} catch (error) {
+						Logger.error('onProgress callback failed:', error);
+					}
 				}
 
 				const finalResponse = await ai.run(model, {
@@ -289,20 +330,88 @@ export const runWithTools = async (
 
 					const reader = (finalResponse as ReadableStream).getReader();
 
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done) break;
+					// Chunk batching for better performance
+					const BATCH_SIZE = 4096; // 4KB
+					const BATCH_TIMEOUT_MS = 10; // 10ms max delay
+					let buffer: Uint8Array[] = [];
+					let bufferSize = 0;
+					let timeoutId: NodeJS.Timeout | null = null;
 
-						// Forward raw bytes to the consumer
-						await onChunk(value);
+					const flushBuffer = async () => {
+						if (buffer.length === 0) return;
+
+						const combined = new Uint8Array(bufferSize);
+						let offset = 0;
+						for (const chunk of buffer) {
+							combined.set(chunk, offset);
+							offset += chunk.byteLength;
+						}
+
+						buffer = [];
+						bufferSize = 0;
+						if (timeoutId) {
+							clearTimeout(timeoutId);
+							timeoutId = null;
+						}
+
+						try {
+							await onChunk(combined);
+						} catch (error) {
+							Logger.error('onChunk callback failed:', error);
+						}
+					};
+
+					while (true) {
+						if (signal?.aborted) {
+							Logger.info('Stream aborted by signal');
+							await flushBuffer();
+							break;
+						}
+
+						const { done, value } = await reader.read();
+						if (done) {
+							await flushBuffer();
+							break;
+						}
+
+						buffer.push(value);
+						bufferSize += value.byteLength;
+
+						if (bufferSize >= BATCH_SIZE) {
+							await flushBuffer();
+						} else if (!timeoutId) {
+							timeoutId = setTimeout(() => flushBuffer(), BATCH_TIMEOUT_MS) as unknown as NodeJS.Timeout;
+						}
 					}
 
 					Logger.info(`Total number of characters: ${totalCharacters}`);
+
+				if (onProgress) {
+					try {
+						await onProgress({
+							stage: 'complete',
+							message: 'Stream complete',
+						});
+					} catch (error) {
+						Logger.error('onProgress callback failed:', error);
+					}
+				}
 					// Return empty response since consumer handles the stream
 					return { response: '' } as AiTextGenerationOutput;
 				}
 
 				Logger.info(`Total number of characters: ${totalCharacters}`);
+
+				if (onProgress) {
+					try {
+						await onProgress({
+							stage: 'complete',
+							message: 'Response complete',
+						});
+					} catch (error) {
+						Logger.error('onProgress callback failed:', error);
+					}
+				}
 				return finalResponse as AiTextGenerationOutput;
 			}
 		} catch (error) {
